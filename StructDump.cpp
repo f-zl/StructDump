@@ -62,11 +62,11 @@ static bool filterArch(ObjectFile &Obj) {
   (void)Obj;
   return true;
 }
-static bool handleBuffer(StringRef Filename, MemoryBufferRef Buffer,
+static bool handleBuffer(StringRef FileName, MemoryBufferRef Buffer,
                          HandlerFn HandleObj, StringRef VariableName,
                          raw_ostream &OS) {
   Expected<std::unique_ptr<Binary>> BinOrErr = object::createBinary(Buffer);
-  error(Filename, BinOrErr.takeError());
+  error(FileName, BinOrErr.takeError());
   bool Result = true;
   auto RecoverableErrorHandler = [&](Error E) {
     Result = false;
@@ -79,54 +79,50 @@ static bool handleBuffer(StringRef Filename, MemoryBufferRef Buffer,
           RecoverableErrorHandler);
       bool ManuallyGenerateUnitIndex = false;
       DICtx->setParseCUTUIndexManually(ManuallyGenerateUnitIndex);
-      if (!HandleObj(*Obj, *DICtx, Filename, VariableName, OS))
+      if (!HandleObj(*Obj, *DICtx, FileName, VariableName, OS))
         Result = false;
     }
   } // handle Marh-O. removed
   else if (auto *Arch = dyn_cast<Archive>(BinOrErr->get()))
-    Result = handleArchive(Filename, *Arch, HandleObj, VariableName, OS);
+    Result = handleArchive(FileName, *Arch, HandleObj, VariableName, OS);
   return Result;
 }
-static bool handleFile(StringRef Filename, HandlerFn HandleObj,
+static bool handleFile(StringRef FileName, HandlerFn HandleObj,
                        StringRef VariableName, raw_ostream &OS) {
   ErrorOr<std::unique_ptr<MemoryBuffer>> BuffOrErr =
-      MemoryBuffer::getFileOrSTDIN(Filename);
-  error(Filename, BuffOrErr.getError());
+      MemoryBuffer::getFileOrSTDIN(FileName);
+  error(FileName, BuffOrErr.getError());
   std::unique_ptr<MemoryBuffer> Buffer = std::move(BuffOrErr.get());
-  return handleBuffer(Filename, *Buffer, HandleObj, VariableName, OS);
+  return handleBuffer(FileName, *Buffer, HandleObj, VariableName, OS);
 }
 
 static bool IsStructType(Type type) {
   return type.getTag() == DW_TAG_structure_type;
 }
-static std::optional<uint64_t>
-GetOffsetOfType(Variable variable) { // FIXME 对于DWARF4，offset不对
-  auto type = variable.find(DW_AT_type);
-  assert(type);
-  auto &typeValue = type.value();
-  //   typeValue.dump(outs()); // getForm()=DW_FORM_ref4,
-  //   dump()显示是type的offset值
-  // return typeValue.getAsCStringOffset();
-  // 参照DWARFFormValue::dump
-  return typeValue.getRawUValue() + typeValue.getUnit()->getOffset();
+static uint64_t GetOffset(const DWARFFormValue &formValue) {
+  return formValue.getRawUValue() + formValue.getUnit()->getOffset();
 }
-static Type FindVariableType(Variable variable) {
-  auto typeOffset = GetOffsetOfType(variable);
-  assert(typeOffset.has_value());
-  outs() << format("typeOffset=%x\n", typeOffset.value());
+static uint64_t GetOffsetOfAttrType(Variable variable) {
+  auto type = variable.find(DW_AT_type);
+  // getForm()=DW_FORM_ref4
+  // 参照DWARFFormValue::dump
+  return GetOffset(type.value());
+}
+static Type FindVariableType(Variable variable, raw_ostream &os) {
+  auto typeOffset = GetOffsetOfAttrType(variable);
+  os << format("typeOffset=%x\n", typeOffset);
   auto unit = variable.getDwarfUnit();
-  auto typeDie = unit->getDIEForOffset(typeOffset.value());
+  auto typeDie = unit->getDIEForOffset(typeOffset);
   assert(typeDie.isValid());
   auto typeName = typeDie.find(DW_AT_name);
   if (typeName.has_value()) { // typedef有名，struct tag没名
-    outs() << formatv("type is {0}\n", typeName->getAsCString().get());
+    os << formatv("type is {0}\n", typeName->getAsCString().get());
   }
   // 循环typedef直到找到具体类型
   while (typeDie.getTag() == DW_TAG_typedef) {
-    auto type = typeDie.find(DW_AT_type);
-    assert(type.has_value());
-    auto offset = type.value().getRawUValue();
-    typeDie = unit->getDIEForOffset(offset + type->getUnit()->getOffset());
+    auto offset = GetOffsetOfAttrType(typeDie);
+    typeDie =
+        unit->getDIEForOffset(offset + typeDie.getDwarfUnit()->getOffset());
   }
   return typeDie;
 }
@@ -157,19 +153,19 @@ static Variable FindVariable(DWARFContext &DICtx, StringRef name) {
 static uint64_t GetDW_AT_byte_size(DWARFDie die) {
   return die.find(DW_AT_byte_size).value().getAsUnsignedConstant().value();
 }
-struct DwarfTagArrayType { // DW_TAG_array_type
-  DWARFDie die;
-  DwarfTagArrayType(DWARFDie die) : die{die} {
+struct DwarfTagArrayType : DWARFDie { // DW_TAG_array_type
+  DwarfTagArrayType(DWARFDie die) : DWARFDie{die} {
     assert(die.getTag() == DW_TAG_array_type);
   }
   // DWARF5标准说array_type一定有DW_AT_name，但dump出来好像没有
   DWARFDie ElementType() const { // array一定有type
-    auto type = die.find(DW_AT_type);
-    auto offset = type->getRawUValue() + type->getUnit()->getOffset();
-    return die.getDwarfUnit()->getDIEForOffset(offset);
+    auto type = find(DW_AT_type);
+    auto unit = getDwarfUnit();
+    auto offset = type->getRawUValue() + unit->getOffset();
+    return unit->getDIEForOffset(offset);
   }
   size_t Length() const {
-    for (auto child = die.getFirstChild(); child; child = child.getSibling()) {
+    for (auto child = getFirstChild(); child; child = child.getSibling()) {
       switch (child.getTag()) {    // 长度在subrange或enumeration
       case DW_TAG_subrange_type: { // gcc用的是这个
         auto value = child.find(DW_AT_upper_bound).value();
@@ -185,24 +181,21 @@ struct DwarfTagArrayType { // DW_TAG_array_type
     assert(0);
   }
 };
-struct DwarfTagMember { // DW_TAG_member
-  DWARFDie die;
-  DwarfTagMember(DWARFDie die) : die{die} {
+struct DwarfTagMember : DWARFDie { // DW_TAG_member
+  DwarfTagMember(DWARFDie die) : DWARFDie{die} {
     assert(die.getTag() == DW_TAG_member);
   }
   const char *Name() const { // member一定有name，除非是匿名union
-    return die.find(DW_AT_name)->getAsCString().get();
+    return this->find(DW_AT_name)->getAsCString().get();
   }
   DWARFDie Type() const { // member一定有type
-    auto offset = die.find(DW_AT_type)->getRawUValue();
-    return die.getDwarfUnit()->getDIEForOffset(offset +
-                                               die.getDwarfUnit()->getOffset());
+    auto offset = this->find(DW_AT_type)->getRawUValue();
+    auto unit = getDwarfUnit();
+    return unit->getDIEForOffset(offset + unit->getOffset());
   }
   size_t MemberOffset() const { // output of offsetof()
                                 // TODO 可能没有data_member_location
-    return die.find(DW_AT_data_member_location)
-        ->getAsUnsignedConstant()
-        .value();
+    return find(DW_AT_data_member_location)->getAsUnsignedConstant().value();
   }
 };
 static void PrintAttrTypeName(DWARFDie die, raw_ostream &os) {
@@ -328,34 +321,31 @@ static void ProcessType(Type type, raw_ostream &os, unsigned childLv) {
   }
 }
 static bool dumpObjectFile(ObjectFile &Obj, DWARFContext &DICtx,
-                           const Twine &Filename, StringRef VariableName,
+                           const Twine &FileName, StringRef VariableName,
                            raw_ostream &OS) {
   (void)Obj;
-  (void)Filename;
+  (void)FileName;
   auto variable = FindVariable(DICtx, VariableName);
   if (!variable.isValid()) {
     OS << "variable not found\n";
-    exit(1);
-  }
-  auto type = FindVariableType(variable);
-  if (!IsStructType(type)) {
-    std::cerr << "variable type is not a struct\n";
     exit(EXIT_FAILURE);
   }
-  ProcessType(type, outs(), 0);
+  auto type = FindVariableType(variable, OS);
+  if (!IsStructType(type)) {
+    OS << "variable type is not a struct\n";
+    exit(EXIT_FAILURE);
+  }
+  ProcessType(type, OS, 0);
   return false;
-}
-static void Process(StringRef fileName, StringRef variableName) {
-  handleFile(fileName, dumpObjectFile, variableName, llvm::outs());
 }
 int main(int argc, char **argv) {
   if (argc != 3) {
     std::cout << "usage: StructDump <elf> <variable>\n";
     exit(EXIT_FAILURE);
   }
-  llvm::InitLLVM X(argc, argv);
+  llvm::InitLLVM X(argc, argv); // catch SIGABRT to print stacktrace
   errs().tie(&outs());
-  llvm::InitializeAllTargetInfos();
-  llvm::InitializeAllTargetMCs();
-  Process(argv[1], argv[2]);
+  StringRef FileName = argv[1];
+  StringRef VariableName = argv[2];
+  handleFile(FileName, dumpObjectFile, VariableName, llvm::outs());
 }
