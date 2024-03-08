@@ -207,8 +207,9 @@ struct DwarfTagMember { // DW_TAG_member
     return die.find(DW_AT_name)->getAsCString().get();
   }
   DWARFDie Type() const { // member一定有type
-    auto offset = die.find(DW_AT_type)->getAsCStringOffset().value();
-    return die.getDwarfUnit()->getDIEForOffset(offset);
+    auto offset = die.find(DW_AT_type)->getRawUValue();
+    return die.getDwarfUnit()->getDIEForOffset(offset +
+                                               die.getDwarfUnit()->getOffset());
   }
   size_t MemberOffset() const { // output of offsetof()
                                 // TODO 可能没有data_member_location
@@ -221,7 +222,7 @@ struct DwarfTagMember { // DW_TAG_member
 static void PrintAttrTypeName(DWARFDie die, raw_ostream &os) {
   auto offset = die.find(DW_AT_type).value().getRawUValue();
   auto unit = die.getDwarfUnit();
-  auto typeDie = unit->getDIEForOffset(offset);
+  auto typeDie = unit->getDIEForOffset(offset + unit->getOffset());
   switch (typeDie.getTag()) {
   case DW_TAG_typedef:
   case DW_TAG_base_type:
@@ -393,8 +394,6 @@ static bool dumpObjectFile(ObjectFile &Obj, DWARFContext &DICtx,
 static void Process(StringRef fileName, StringRef variableName) {
   handleFile(fileName, dumpObjectFile, variableName, llvm::outs());
 }
-// DWARF4处理不正确 (llvm-dwarfdump则可以处理)
-// 可能不是DWARF4，而是多个Compilation Unit的影响
 int main(int argc, char **argv) {
   if (argc != 3) {
     std::cout << "usage: StructDump <elf> <variable>\n";
