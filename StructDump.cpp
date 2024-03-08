@@ -1,4 +1,4 @@
-
+#include "DwarfTag.hpp"
 #include <cstdlib>
 #include <iostream>
 #include <llvm/BinaryFormat/Dwarf.h>
@@ -19,12 +19,6 @@ using Type = DWARFDie;
 using HandlerFn = std::function<bool(ObjectFile &, DWARFContext &DICtx,
                                      const Twine &, StringRef, raw_ostream &)>;
 
-// static void error(Error Err) {
-//   if (!Err)
-//     return;
-//   WithColor::error() << toString(std::move(Err)) << "\n";
-//   exit(1);
-// }
 static void error(StringRef Prefix, Error Err) {
   if (!Err)
     return;
@@ -150,54 +144,6 @@ static Variable FindVariable(DWARFContext &DICtx, StringRef name) {
   }
   return {};
 }
-static uint64_t GetDW_AT_byte_size(DWARFDie die) {
-  return die.find(DW_AT_byte_size).value().getAsUnsignedConstant().value();
-}
-struct DwarfTagArrayType : DWARFDie { // DW_TAG_array_type
-  DwarfTagArrayType(DWARFDie die) : DWARFDie{die} {
-    assert(die.getTag() == DW_TAG_array_type);
-  }
-  // DWARF5标准说array_type一定有DW_AT_name，但dump出来好像没有
-  DWARFDie ElementType() const { // array一定有type
-    auto type = find(DW_AT_type);
-    auto unit = getDwarfUnit();
-    auto offset = type->getRawUValue() + unit->getOffset();
-    return unit->getDIEForOffset(offset);
-  }
-  size_t Length() const {
-    for (auto child = getFirstChild(); child; child = child.getSibling()) {
-      switch (child.getTag()) {    // 长度在subrange或enumeration
-      case DW_TAG_subrange_type: { // gcc用的是这个
-        auto value = child.find(DW_AT_upper_bound).value();
-        return value.getAsUnsignedConstant().value() + 1;
-      } break;
-      case DW_TAG_enumeration_type:
-        // TODO
-        break;
-      default:
-        break;
-      }
-    }
-    assert(0);
-  }
-};
-struct DwarfTagMember : DWARFDie { // DW_TAG_member
-  DwarfTagMember(DWARFDie die) : DWARFDie{die} {
-    assert(die.getTag() == DW_TAG_member);
-  }
-  const char *Name() const { // member一定有name，除非是匿名union
-    return this->find(DW_AT_name)->getAsCString().get();
-  }
-  DWARFDie Type() const { // member一定有type
-    auto offset = this->find(DW_AT_type)->getRawUValue();
-    auto unit = getDwarfUnit();
-    return unit->getDIEForOffset(offset + unit->getOffset());
-  }
-  size_t MemberOffset() const { // output of offsetof()
-                                // TODO 可能没有data_member_location
-    return find(DW_AT_data_member_location)->getAsUnsignedConstant().value();
-  }
-};
 static void PrintAttrTypeName(DWARFDie die, raw_ostream &os) {
   auto offset = die.find(DW_AT_type).value().getRawUValue();
   auto unit = die.getDwarfUnit();
@@ -206,7 +152,7 @@ static void PrintAttrTypeName(DWARFDie die, raw_ostream &os) {
   case DW_TAG_typedef:
   case DW_TAG_base_type:
     // 打印DW_AT_name
-    os << typeDie.find(DW_AT_name)->getAsCString().get();
+    os << GetDW_AT_name(typeDie);
     break;
   case DW_TAG_array_type: { // 打印基本属性
     // TODO 数组长度
@@ -226,9 +172,9 @@ static void PrintAttrTypeName(DWARFDie die, raw_ostream &os) {
 }
 static void ProcessType(Type type, raw_ostream &os, unsigned childLv);
 static void ProcessStruct(Type type, raw_ostream &os, unsigned childLv) {
-  // 打印名字
-  // 从第一个child开始循环，直到null
-  os << formatv("struct size {0}\n", GetDW_AT_byte_size(type));
+  DwarfTagStructureType st{type};
+  os << formatv("struct size {0}\n", st.ByteSize());
+  // 循环直到DW_TAG_null
   for (auto child = type.getFirstChild(); child; child = child.getSibling()) {
     ProcessType(child, os, childLv + 1);
   }
@@ -236,17 +182,13 @@ static void ProcessStruct(Type type, raw_ostream &os, unsigned childLv) {
 static void PrintDW_AT_type(DWARFDie Die, DWARFFormValue FormValue,
                             raw_ostream &OS) {
   DWARFDie D = resolveReferencedType(Die, FormValue);
-  OS << "\"";
   dumpTypeQualifiedName(D, OS); // 如果DW_AT_type是数组，可以打印出数组长度
-  OS << "\"";
 }
 static void ProcessMember(Type type, raw_ostream &os, unsigned childLv) {
-  // 可以有DW_AT_data_member_location或DW_AT_data_bit_offset或没有
-  os << formatv("member name {0} type ",
-                type.find(DW_AT_name).value().getAsCString().get());
-  PrintAttrTypeName(type, os);
-  // PrintDW_AT_type(type, type.find(DW_AT_type).value(), os);
   auto member = DwarfTagMember{type};
+  // 可以有DW_AT_data_member_location或DW_AT_data_bit_offset或没有
+  os << formatv("member name {0} type ", member.Name());
+  PrintAttrTypeName(type, os);
   os << formatv(" offset {0}\n", member.MemberOffset());
   ProcessType(member.Type(), os, childLv + 1);
 }
