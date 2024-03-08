@@ -1,8 +1,6 @@
 
 #include <cstdlib>
 #include <iostream>
-// #include <llvm/MC/MCRegisterInfo.h>
-// #include <llvm/MC/TargetRegistry.h>
 #include <llvm/BinaryFormat/Dwarf.h>
 #include <llvm/DebugInfo/DWARF/DWARFContext.h>
 #include <llvm/DebugInfo/DWARF/DWARFObject.h>
@@ -135,8 +133,6 @@ static Type FindVariableType(Variable variable) {
 static bool VariableNameMatch(DWARFDie &die, StringRef expectName) {
   if (die.getTag() != DW_TAG_variable)
     return false;
-  //   auto actualName =
-  //   die.getAttributeValueAsReferencedDie(dwarf::DW_AT_name);
   auto name = die.find(dwarf::DW_AT_name);
   // 有的variable没有name
   if (!name.has_value())
@@ -144,18 +140,6 @@ static bool VariableNameMatch(DWARFDie &die, StringRef expectName) {
   auto actualName = name.value().getAsCString();
   assert(actualName);
   return actualName.get() == expectName;
-  //   for (const auto &attr : die.attributes()) {
-  //     if (attr.Attr == DW_AT_name) {
-  //       auto actualName = attr.Value.getAsCString();
-  //       assert(actualName);
-  //       if (expectName == actualName.get()) {
-  //         return true;
-  //       } else {
-  //         return false; // 1个die只有1个DW_AT_name
-  //       }
-  //     }
-  //   }
-  //   return false;
 }
 static Variable FindVariable(DWARFContext &DICtx, StringRef name) {
   DWARFContext::unit_iterator_range Units = DICtx.info_section_units();
@@ -169,6 +153,9 @@ static Variable FindVariable(DWARFContext &DICtx, StringRef name) {
     }
   }
   return {};
+}
+static uint64_t GetDW_AT_byte_size(DWARFDie die) {
+  return die.find(DW_AT_byte_size).value().getAsUnsignedConstant().value();
 }
 struct DwarfTagArrayType { // DW_TAG_array_type
   DWARFDie die;
@@ -218,7 +205,6 @@ struct DwarfTagMember { // DW_TAG_member
         .value();
   }
 };
-
 static void PrintAttrTypeName(DWARFDie die, raw_ostream &os) {
   auto offset = die.find(DW_AT_type).value().getRawUValue();
   auto unit = die.getDwarfUnit();
@@ -240,52 +226,16 @@ static void PrintAttrTypeName(DWARFDie die, raw_ostream &os) {
     // TODO 可能有tag name，测试看看
     os << "struct";
     break;
-  // union
+  case DW_TAG_union_type:
   default:
     os << "?";
-  }
-  // auto typeName = typeDie.find(DW_AT_name);
-  // // return typeName.value().getAsCString().get();
-  // if (typeName) {
-  //   return typeName.value().getAsCString().get();
-  // } else {
-  //   return "?";
-  // }
-}
-static void ProcessTypeNonRecursive(Type type, raw_ostream &os,
-                                    unsigned childLv) {
-  // type.dump();
-  while (childLv-- > 0) {
-    os << '-';
-  }
-  switch (type.getTag()) {
-  case DW_TAG_member:
-    // 可以有DW_AT_data_member_location或DW_AT_data_bit_offset或没有
-    os << formatv("member name {0} type ",
-                  type.find(DW_AT_name).value().getAsCString().get());
-    PrintAttrTypeName(type, os);
-    os << formatv(" offset {0}", DwarfTagMember{type}.MemberOffset());
-    os << '\n';
-    break;
-  case DW_TAG_structure_type:
-    os << formatv(
-        "struct size {0}\n",
-        type.find(DW_AT_byte_size).value().getAsUnsignedConstant().value());
-    // os << formatv("struct name {0} type {1}\n",
-    //               type.find(DW_AT_name).value().getAsCString().get(),
-    //               type.find(DW_AT_type).value().getAsCString().get());
-    break;
-  default:
-    os << formatv("Unknown tag {0}\n", type.getTag());
   }
 }
 static void ProcessType(Type type, raw_ostream &os, unsigned childLv);
 static void ProcessStruct(Type type, raw_ostream &os, unsigned childLv) {
   // 打印名字
   // 从第一个child开始循环，直到null
-  os << formatv(
-      "struct size {0}\n",
-      type.find(DW_AT_byte_size).value().getAsUnsignedConstant().value());
+  os << formatv("struct size {0}\n", GetDW_AT_byte_size(type));
   for (auto child = type.getFirstChild(); child; child = child.getSibling()) {
     ProcessType(child, os, childLv + 1);
   }
@@ -313,6 +263,11 @@ static DWARFDie GetDW_AT_Type(DWARFDie die) {
   auto originalTypeOffset = originalType.getRawUValue() + unit->getOffset();
   return unit->getDIEForOffset(originalTypeOffset);
 }
+static void PrintIndentLevel(raw_ostream &os, unsigned indentLevel) {
+  for (unsigned lv = 0; lv < indentLevel; lv++) {
+    os << '-';
+  }
+}
 static void ProcessTypedef(Type type, raw_ostream &os, unsigned childLv) {
   // PrintDW_AT_type(type, type.find(DW_AT_type).value(), os);
   // 一直找，直到找到不是typedef
@@ -326,6 +281,7 @@ static void ProcessTypedef(Type type, raw_ostream &os, unsigned childLv) {
   // 最终的tag可能是base_type, structure
   switch (type.getTag()) {
   case DW_TAG_structure_type:
+    PrintIndentLevel(os, childLv + 1);
     ProcessStruct(type, os, childLv + 1);
     break;
   case DW_TAG_union_type:
@@ -345,9 +301,7 @@ static void ProcessArrayType(Type type, raw_ostream &os, unsigned childLv) {
 }
 static void ProcessType(Type type, raw_ostream &os, unsigned childLv) {
   // 递归处理struct类型
-  for (unsigned lv = 0; lv < childLv; lv++) {
-    os << '-';
-  }
+  PrintIndentLevel(os, childLv);
   switch (type.getTag()) {
   case DW_TAG_structure_type:
     ProcessStruct(type, os, childLv);
