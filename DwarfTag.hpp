@@ -67,11 +67,17 @@ struct DwarfTagStructureType {
   llvm::DWARFDie die;
   // use `for(auto child = getChild(); child; child = child.getSibling())` to
   // iterate members
-  // TODO tag name
   DwarfTagStructureType(llvm::DWARFDie die) : die{die} {
     assert(die.getTag() == llvm::dwarf::DW_TAG_structure_type);
   }
   uint64_t ByteSize() const { return GetDW_AT_byte_size(die); }
+  const char *TagName() const {
+    auto value = die.find(llvm::dwarf::DW_AT_name);
+    if (value) {
+      return value->getAsCString().get();
+    }
+    return "(anonymous)";
+  }
 };
 struct DwarfTagTypedef {
   llvm::DWARFDie die;

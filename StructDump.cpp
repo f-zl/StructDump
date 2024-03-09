@@ -92,12 +92,14 @@ static bool handleFile(StringRef FileName, HandlerFn HandleObj,
 static bool IsStructType(Type type) {
   return type.getTag() == DW_TAG_structure_type;
 }
-static Type FindVariableType(Variable variable, raw_ostream &os) {
+static Type FindVariableType(Variable variable, StringRef variableName,
+                             raw_ostream &os) {
   auto typeDie = GetDW_AT_type(variable);
   assert(typeDie.isValid());
   auto typeName = typeDie.find(DW_AT_name);
   if (typeName.has_value()) { // typedef有名，struct tag没名
-    os << formatv("type is {0}\n", typeName->getAsCString().get());
+    os << formatv("type of {0} is {1}\n", variableName,
+                  typeName->getAsCString().get());
   }
   // 循环typedef直到找到具体类型
   while (typeDie.getTag() == DW_TAG_typedef) {
@@ -129,38 +131,13 @@ static Variable FindVariable(DWARFContext &DICtx, StringRef name) {
   }
   return {};
 }
-static void PrintAttrTypeName(DWARFDie die, raw_ostream &os) {
-  auto offset = die.find(DW_AT_type).value().getRawUValue();
-  auto unit = die.getDwarfUnit();
-  auto typeDie = unit->getDIEForOffset(offset + unit->getOffset());
-  switch (typeDie.getTag()) {
-  case DW_TAG_typedef:
-  case DW_TAG_base_type:
-    // 打印DW_AT_name
-    os << GetDW_AT_name(typeDie);
-    break;
-  case DW_TAG_array_type: { // 打印基本属性
-    // TODO 数组长度
-    auto array = DwarfTagArrayType(typeDie);
-    os << formatv("array of {0} length {1}",
-                  array.ElementType().find(DW_AT_name)->getAsCString().get(),
-                  array.Length());
-  } break;
-  case DW_TAG_structure_type:
-    // TODO 可能有tag name，测试看看
-    os << "struct";
-    break;
-  case DW_TAG_union_type:
-  default:
-    os << "?";
-  }
-}
 static void ProcessType(Type type, raw_ostream &os, unsigned childLv);
 static void ProcessStruct(Type type, raw_ostream &os, unsigned childLv) {
   DwarfTagStructureType st{type};
-  os << formatv("struct size {0}\n", st.ByteSize());
+  os << formatv("struct {0} size {1}\n", st.TagName(), st.ByteSize());
   // 循环直到DW_TAG_null
-  for (auto child = type.getFirstChild(); child; child = child.getSibling()) {
+  for (auto child = type.getFirstChild();
+       child && child.getTag() != DW_TAG_null; child = child.getSibling()) {
     ProcessType(child, os, childLv + 1);
   }
 }
@@ -172,9 +149,8 @@ static void PrintDW_AT_type(DWARFDie Die, DWARFFormValue FormValue,
 static void ProcessMember(Type type, raw_ostream &os, unsigned childLv) {
   auto member = DwarfTagMember{type};
   // 可以有DW_AT_data_member_location或DW_AT_data_bit_offset或没有
-  os << formatv("member name {0} type ", member.Name());
-  PrintAttrTypeName(type, os);
-  os << formatv(" offset {0}\n", member.MemberOffset());
+  os << formatv("member name {0} offset {1}\n", member.Name(),
+                member.MemberOffset());
   ProcessType(member.Type(), os, childLv + 1);
 }
 static void PrintIndentLevel(raw_ostream &os, unsigned indentLevel) {
@@ -183,13 +159,14 @@ static void PrintIndentLevel(raw_ostream &os, unsigned indentLevel) {
   }
 }
 static void ProcessTypedef(Type type, raw_ostream &os, unsigned childLv) {
+  DwarfTagTypedef tpdef{type};
   // PrintDW_AT_type(type, type.find(DW_AT_type).value(), os);
   // 一直找，直到找到不是typedef
-  os << formatv("typedef: {0}", type.find(DW_AT_name)->getAsCString().get());
-  type = GetDW_AT_type(type);
-  while (type.getTag() == DW_TAG_typedef) {
-    os << formatv(" -> {0}", type.find(DW_AT_name)->getAsCString().get());
-    type = GetDW_AT_type(type);
+  os << formatv("typedef: {0}", tpdef.Name());
+  for (type = tpdef.Type(); type.getTag() == DW_TAG_typedef;
+       type = tpdef.Type()) {
+    tpdef = type;
+    os << formatv(" -> {0}", tpdef.Name());
   }
   os << '\n';
   // 最终的tag可能是base_type, structure
@@ -208,11 +185,10 @@ static void ProcessArrayType(Type type, raw_ostream &os, unsigned childLv) {
   // TODO 长度
   // DW_TAG_array_tag一般有DW_TAG_subrange_type作为child，后者有DW_AT_upper_bound是数组索引上限，长度=索引上限+1
   // PrintDW_AT_type(type, type.find(DW_AT_type).value(), os);
-  os << formatv("array of {0}\n", DwarfTagArrayType(type)
-                                      .ElementType()
-                                      .find(DW_AT_name)
-                                      ->getAsCString()
-                                      .get());
+  auto array = DwarfTagArrayType(type);
+  os << formatv("array of {0} length {1}\n",
+                array.ElementType().find(DW_AT_name)->getAsCString().get(),
+                array.Length());
 }
 static void ProcessType(Type type, raw_ostream &os, unsigned childLv) {
   // 递归处理struct类型
@@ -252,7 +228,7 @@ static bool dumpObjectFile(ObjectFile &Obj, DWARFContext &DICtx,
     OS << "variable not found\n";
     exit(EXIT_FAILURE);
   }
-  auto type = FindVariableType(variable, OS);
+  auto type = FindVariableType(variable, VariableName, OS);
   if (!IsStructType(type)) {
     OS << "variable type is not a struct\n";
     exit(EXIT_FAILURE);
