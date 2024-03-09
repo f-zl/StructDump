@@ -89,24 +89,11 @@ static bool handleFile(StringRef FileName, HandlerFn HandleObj,
   std::unique_ptr<MemoryBuffer> Buffer = std::move(BuffOrErr.get());
   return handleBuffer(FileName, *Buffer, HandleObj, VariableName, OS);
 }
-
 static bool IsStructType(Type type) {
   return type.getTag() == DW_TAG_structure_type;
 }
-static uint64_t GetOffset(const DWARFFormValue &formValue) {
-  return formValue.getRawUValue() + formValue.getUnit()->getOffset();
-}
-static uint64_t GetOffsetOfAttrType(Variable variable) {
-  auto type = variable.find(DW_AT_type);
-  // getForm()=DW_FORM_ref4
-  // 参照DWARFFormValue::dump
-  return GetOffset(type.value());
-}
 static Type FindVariableType(Variable variable, raw_ostream &os) {
-  auto typeOffset = GetOffsetOfAttrType(variable);
-  os << format("typeOffset=%x\n", typeOffset);
-  auto unit = variable.getDwarfUnit();
-  auto typeDie = unit->getDIEForOffset(typeOffset);
+  auto typeDie = GetDW_AT_type(variable);
   assert(typeDie.isValid());
   auto typeName = typeDie.find(DW_AT_name);
   if (typeName.has_value()) { // typedef有名，struct tag没名
@@ -114,9 +101,7 @@ static Type FindVariableType(Variable variable, raw_ostream &os) {
   }
   // 循环typedef直到找到具体类型
   while (typeDie.getTag() == DW_TAG_typedef) {
-    auto offset = GetOffsetOfAttrType(typeDie);
-    typeDie =
-        unit->getDIEForOffset(offset + typeDie.getDwarfUnit()->getOffset());
+    typeDie = GetDW_AT_type(typeDie);
   }
   return typeDie;
 }
@@ -192,12 +177,6 @@ static void ProcessMember(Type type, raw_ostream &os, unsigned childLv) {
   os << formatv(" offset {0}\n", member.MemberOffset());
   ProcessType(member.Type(), os, childLv + 1);
 }
-static DWARFDie GetDW_AT_Type(DWARFDie die) {
-  auto originalType = die.find(DW_AT_type).value();
-  auto unit = die.getDwarfUnit();
-  auto originalTypeOffset = originalType.getRawUValue() + unit->getOffset();
-  return unit->getDIEForOffset(originalTypeOffset);
-}
 static void PrintIndentLevel(raw_ostream &os, unsigned indentLevel) {
   for (unsigned lv = 0; lv < indentLevel; lv++) {
     os << '-';
@@ -207,10 +186,10 @@ static void ProcessTypedef(Type type, raw_ostream &os, unsigned childLv) {
   // PrintDW_AT_type(type, type.find(DW_AT_type).value(), os);
   // 一直找，直到找到不是typedef
   os << formatv("typedef: {0}", type.find(DW_AT_name)->getAsCString().get());
-  type = GetDW_AT_Type(type);
+  type = GetDW_AT_type(type);
   while (type.getTag() == DW_TAG_typedef) {
     os << formatv(" -> {0}", type.find(DW_AT_name)->getAsCString().get());
-    type = GetDW_AT_Type(type);
+    type = GetDW_AT_type(type);
   }
   os << '\n';
   // 最终的tag可能是base_type, structure
@@ -225,6 +204,7 @@ static void ProcessTypedef(Type type, raw_ostream &os, unsigned childLv) {
   }
 }
 static void ProcessArrayType(Type type, raw_ostream &os, unsigned childLv) {
+  (void)childLv;
   // TODO 长度
   // DW_TAG_array_tag一般有DW_TAG_subrange_type作为child，后者有DW_AT_upper_bound是数组索引上限，长度=索引上限+1
   // PrintDW_AT_type(type, type.find(DW_AT_type).value(), os);

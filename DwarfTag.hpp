@@ -12,6 +12,13 @@ inline uint64_t GetDW_AT_byte_size(llvm::DWARFDie die) {
 inline const char *GetDW_AT_name(llvm::DWARFDie die) {
   return die.find(llvm::dwarf::DW_AT_name)->getAsCString().get();
 }
+inline llvm::DWARFDie GetDW_AT_type(llvm::DWARFDie die) {
+  // DWARFFormValue::getForm()=DW_FORM_ref4
+  // 参照DWARFFormValue::dump
+  auto offset = die.find(llvm::dwarf::DW_AT_type)->getRawUValue();
+  auto unit = die.getDwarfUnit();
+  return unit->getDIEForOffset(offset + unit->getOffset());
+}
 struct DwarfTagArrayType { // DW_TAG_array_type
   llvm::DWARFDie die;
   DwarfTagArrayType(llvm::DWARFDie die) : die{die} {
@@ -19,10 +26,7 @@ struct DwarfTagArrayType { // DW_TAG_array_type
   }
   // DWARF5标准说array_type一定有DW_AT_name，但dump出来好像没有
   llvm::DWARFDie ElementType() const { // array一定有type
-    auto type = die.find(llvm::dwarf::DW_AT_type);
-    auto unit = die.getDwarfUnit();
-    auto offset = type->getRawUValue() + unit->getOffset();
-    return unit->getDIEForOffset(offset);
+    return GetDW_AT_type(die);
   }
   uint64_t Length() const {
     for (auto child = die.getFirstChild(); child; child = child.getSibling()) {
@@ -50,9 +54,7 @@ struct DwarfTagMember { // DW_TAG_member
     return GetDW_AT_name(die);
   }
   llvm::DWARFDie Type() const { // member一定有type
-    auto offset = die.find(llvm::dwarf::DW_AT_type)->getRawUValue();
-    auto unit = die.getDwarfUnit();
-    return unit->getDIEForOffset(offset + unit->getOffset());
+    return GetDW_AT_type(die);
   }
   uint64_t MemberOffset() const { // output of offsetof()
                                   // TODO 可能没有data_member_location
@@ -70,4 +72,12 @@ struct DwarfTagStructureType {
     assert(die.getTag() == llvm::dwarf::DW_TAG_structure_type);
   }
   uint64_t ByteSize() const { return GetDW_AT_byte_size(die); }
+};
+struct DwarfTagTypedef {
+  llvm::DWARFDie die;
+  DwarfTagTypedef(llvm::DWARFDie die) : die{die} {
+    assert(die.getTag() == llvm::dwarf::DW_TAG_typedef);
+  }
+  llvm::DWARFDie Type() { return GetDW_AT_type(die); }
+  const char *Name() const { return GetDW_AT_name(die); }
 };
