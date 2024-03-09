@@ -169,16 +169,7 @@ static void ProcessTypedef(Type type, raw_ostream &os, unsigned childLv) {
     os << formatv(" -> {0}", tpdef.Name());
   }
   os << '\n';
-  // 最终的tag可能是base_type, structure
-  switch (type.getTag()) {
-  case DW_TAG_structure_type:
-    PrintIndentLevel(os, childLv + 1);
-    ProcessStruct(type, os, childLv + 1);
-    break;
-  case DW_TAG_union_type:
-  default:
-    break;
-  }
+  ProcessType(type, os, childLv + 1);
 }
 static void ProcessArrayType(Type type, raw_ostream &os, unsigned childLv) {
   (void)childLv;
@@ -189,6 +180,11 @@ static void ProcessArrayType(Type type, raw_ostream &os, unsigned childLv) {
   os << formatv("array of {0} length {1}\n",
                 array.ElementType().find(DW_AT_name)->getAsCString().get(),
                 array.Length());
+}
+static void ProcessBaseType(Type type, raw_ostream &os, unsigned childLv) {
+  (void)childLv;
+  DwarfTagBaseType bt{type};
+  os << formatv("base type {0} size {1}\n", bt.Name(), bt.ByteSize());
 }
 static void ProcessType(Type type, raw_ostream &os, unsigned childLv) {
   // 递归处理struct类型
@@ -204,8 +200,7 @@ static void ProcessType(Type type, raw_ostream &os, unsigned childLv) {
     ProcessTypedef(type, os, childLv);
     break;
   case DW_TAG_base_type:
-    os << formatv("base type {0}\n",
-                  type.find(DW_AT_name)->getAsCString().get());
+    ProcessBaseType(type, os, childLv);
     break;
   case DW_TAG_array_type:
     ProcessArrayType(type, os, childLv);
