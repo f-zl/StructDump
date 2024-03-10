@@ -30,3 +30,6 @@ target_link_libraries(simple-tool LLVM-16) # 用llvm_map_components_to_libnames�
 # 用于dump嵌入式elf里的某个结构体变量
 add_executable(StructDump StructDump.cpp)
 target_link_libraries(StructDump LLVM-16)
+
+add_executable(TableGen TableGen.cpp)
+target_link_libraries(TableGen LLVM-16)

@@ -93,13 +93,7 @@ struct DwarfTagBaseType {
   DwarfTagBaseType(llvm::DWARFDie die) : die{die} {
     assert(die.getTag() == llvm::dwarf::DW_TAG_base_type);
   }
-  const char *Name() const {
-    return die.find(llvm::dwarf::DW_AT_name)->getAsCString().get();
-  }
-  uint64_t ByteSize() const {
-    return die.find(llvm::dwarf::DW_AT_byte_size)
-        ->getAsUnsignedConstant()
-        .value();
-  }
+  const char *Name() const { return GetDW_AT_name(die); }
+  uint64_t ByteSize() const { return GetDW_AT_byte_size(die); }
   // DW_AT_encoding: DW_ATE_float, DW_ATE_signed, DW_ATE_unsigned等
 };

@@ -1,7 +1,6 @@
 #include "BoilerPlate.hpp"
 #include "DwarfTag.hpp"
 #include <cstdlib>
-#include <iostream>
 #include <llvm/BinaryFormat/Dwarf.h>
 #include <llvm/DebugInfo/DWARF/DWARFContext.h>
 #include <llvm/DebugInfo/DWARF/DWARFObject.h>
@@ -63,13 +62,14 @@ static Variable FindVariable(DWARFContext &DICtx, StringRef name) {
   return {};
 }
 static void ProcessType(Type type, raw_ostream &os, unsigned childLv);
+static void ProcessMember(Type type, raw_ostream &os, unsigned childLv);
 static void ProcessStruct(Type type, raw_ostream &os, unsigned childLv) {
   DwarfTagStructureType st{type};
   os << formatv("struct {0} size {1}\n", st.TagName(), st.ByteSize());
   // iterate until DW_TAG_null
   for (auto child = type.getFirstChild();
        child && child.getTag() != DW_TAG_null; child = child.getSibling()) {
-    ProcessType(child, os, childLv + 1);
+    ProcessMember(child, os, childLv + 1);
   }
 }
 static void PrintDW_AT_type(DWARFDie Die, DWARFFormValue FormValue,
@@ -105,8 +105,7 @@ static void ProcessArrayType(Type type, raw_ostream &os, unsigned childLv) {
   (void)childLv;
   // PrintDW_AT_type(type, type.find(DW_AT_type).value(), os);
   auto array = DwarfTagArrayType(type);
-  os << formatv("array of {0} length {1}\n",
-                array.ElementType().find(DW_AT_name)->getAsCString().get(),
+  os << formatv("array of {0} length {1}\n", GetDW_AT_name(array.ElementType()),
                 array.Length());
 }
 static void ProcessBaseType(Type type, raw_ostream &os, unsigned childLv) {
@@ -158,7 +157,7 @@ static bool dumpObjectFile(ObjectFile &Obj, DWARFContext &DICtx,
 }
 int main(int argc, char **argv) {
   if (argc != 3) {
-    std::cout << "usage: StructDump <elf> <variable>\n";
+    llvm::outs() << "usage: StructDump <elf> <variable>\n";
     exit(EXIT_FAILURE);
   }
   llvm::InitLLVM X(argc, argv); // catch SIGABRT to print stacktrace
