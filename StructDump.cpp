@@ -1,10 +1,10 @@
+#include "BoilerPlate.hpp"
 #include "DwarfTag.hpp"
 #include <cstdlib>
 #include <iostream>
 #include <llvm/BinaryFormat/Dwarf.h>
 #include <llvm/DebugInfo/DWARF/DWARFContext.h>
 #include <llvm/DebugInfo/DWARF/DWARFObject.h>
-#include <llvm/Object/Archive.h>
 #include <llvm/Support/Format.h>
 #include <llvm/Support/FormatVariadic.h>
 #include <llvm/Support/InitLLVM.h>
@@ -16,78 +16,9 @@ using namespace llvm::object;
 
 using Variable = DWARFDie;
 using Type = DWARFDie;
-using HandlerFn = std::function<bool(ObjectFile &, DWARFContext &DICtx,
-                                     const Twine &, StringRef, raw_ostream &)>;
 
-static void error(StringRef Prefix, Error Err) {
-  if (!Err)
-    return;
-  WithColor::error() << Prefix << ": " << toString(std::move(Err)) << "\n";
-  exit(1);
-}
-static void error(StringRef Prefix, std::error_code EC) {
-  error(Prefix, errorCodeToError(EC));
-}
 static DWARFDie resolveReferencedType(DWARFDie D, DWARFFormValue F) {
   return D.getAttributeValueAsReferencedDie(F).resolveTypeUnitReference();
-}
-static bool handleBuffer(StringRef Filename, MemoryBufferRef Buffer,
-                         HandlerFn HandleObj, StringRef VariableName,
-                         raw_ostream &OS);
-static bool handleArchive(StringRef Filename, Archive &Arch,
-                          HandlerFn HandleObj, StringRef VariableName,
-                          raw_ostream &OS) {
-  bool Result = true;
-  Error Err = Error::success();
-  for (const auto &Child : Arch.children(Err)) {
-    auto BuffOrErr = Child.getMemoryBufferRef();
-    error(Filename, BuffOrErr.takeError());
-    auto NameOrErr = Child.getName();
-    error(Filename, NameOrErr.takeError());
-    std::string Name = (Filename + "(" + NameOrErr.get() + ")").str();
-    Result &= handleBuffer(Name, BuffOrErr.get(), HandleObj, VariableName, OS);
-  }
-  error(Filename, std::move(Err));
-
-  return Result;
-}
-/// Return true if the object file has not been filtered by an --arch option.
-static bool filterArch(ObjectFile &Obj) {
-  (void)Obj;
-  return true;
-}
-static bool handleBuffer(StringRef FileName, MemoryBufferRef Buffer,
-                         HandlerFn HandleObj, StringRef VariableName,
-                         raw_ostream &OS) {
-  Expected<std::unique_ptr<Binary>> BinOrErr = object::createBinary(Buffer);
-  error(FileName, BinOrErr.takeError());
-  bool Result = true;
-  auto RecoverableErrorHandler = [&](Error E) {
-    Result = false;
-    WithColor::defaultErrorHandler(std::move(E));
-  };
-  if (auto *Obj = dyn_cast<ObjectFile>(BinOrErr->get())) {
-    if (filterArch(*Obj)) {
-      std::unique_ptr<DWARFContext> DICtx = DWARFContext::create(
-          *Obj, DWARFContext::ProcessDebugRelocations::Process, nullptr, "",
-          RecoverableErrorHandler);
-      bool ManuallyGenerateUnitIndex = false;
-      DICtx->setParseCUTUIndexManually(ManuallyGenerateUnitIndex);
-      if (!HandleObj(*Obj, *DICtx, FileName, VariableName, OS))
-        Result = false;
-    }
-  } // handle Marh-O. removed
-  else if (auto *Arch = dyn_cast<Archive>(BinOrErr->get()))
-    Result = handleArchive(FileName, *Arch, HandleObj, VariableName, OS);
-  return Result;
-}
-static bool handleFile(StringRef FileName, HandlerFn HandleObj,
-                       StringRef VariableName, raw_ostream &OS) {
-  ErrorOr<std::unique_ptr<MemoryBuffer>> BuffOrErr =
-      MemoryBuffer::getFileOrSTDIN(FileName);
-  error(FileName, BuffOrErr.getError());
-  std::unique_ptr<MemoryBuffer> Buffer = std::move(BuffOrErr.get());
-  return handleBuffer(FileName, *Buffer, HandleObj, VariableName, OS);
 }
 static bool IsStructType(Type type) {
   return type.getTag() == DW_TAG_structure_type;
