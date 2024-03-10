@@ -1,3 +1,4 @@
+#pragma once
 #include <llvm/BinaryFormat/Dwarf.h>
 #include <llvm/DebugInfo/DWARF/DWARFDie.h>
 #include <llvm/DebugInfo/DWARF/DWARFUnit.h>

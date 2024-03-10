@@ -135,7 +135,7 @@ static void ProcessType(Type type, raw_ostream &os, unsigned childLv);
 static void ProcessStruct(Type type, raw_ostream &os, unsigned childLv) {
   DwarfTagStructureType st{type};
   os << formatv("struct {0} size {1}\n", st.TagName(), st.ByteSize());
-  // 循环直到DW_TAG_null
+  // iterate until DW_TAG_null
   for (auto child = type.getFirstChild();
        child && child.getTag() != DW_TAG_null; child = child.getSibling()) {
     ProcessType(child, os, childLv + 1);
@@ -148,7 +148,6 @@ static void PrintDW_AT_type(DWARFDie Die, DWARFFormValue FormValue,
 }
 static void ProcessMember(Type type, raw_ostream &os, unsigned childLv) {
   auto member = DwarfTagMember{type};
-  // 可以有DW_AT_data_member_location或DW_AT_data_bit_offset或没有
   os << formatv("member name {0} offset {1}\n", member.Name(),
                 member.MemberOffset());
   ProcessType(member.Type(), os, childLv + 1);
@@ -173,8 +172,6 @@ static void ProcessTypedef(Type type, raw_ostream &os, unsigned childLv) {
 }
 static void ProcessArrayType(Type type, raw_ostream &os, unsigned childLv) {
   (void)childLv;
-  // TODO 长度
-  // DW_TAG_array_tag一般有DW_TAG_subrange_type作为child，后者有DW_AT_upper_bound是数组索引上限，长度=索引上限+1
   // PrintDW_AT_type(type, type.find(DW_AT_type).value(), os);
   auto array = DwarfTagArrayType(type);
   os << formatv("array of {0} length {1}\n",
@@ -187,7 +184,7 @@ static void ProcessBaseType(Type type, raw_ostream &os, unsigned childLv) {
   os << formatv("base type {0} size {1}\n", bt.Name(), bt.ByteSize());
 }
 static void ProcessType(Type type, raw_ostream &os, unsigned childLv) {
-  // 递归处理struct类型
+  // recursive
   PrintIndentLevel(os, childLv);
   switch (type.getTag()) {
   case DW_TAG_structure_type:
@@ -204,9 +201,6 @@ static void ProcessType(Type type, raw_ostream &os, unsigned childLv) {
     break;
   case DW_TAG_array_type:
     ProcessArrayType(type, os, childLv);
-    break;
-  case DW_TAG_null:
-    os << "tag null\n";
     break;
   default:
     os << formatv("Unknown tag {0}\n", type.getTag());
