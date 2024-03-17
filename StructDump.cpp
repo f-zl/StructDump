@@ -62,14 +62,13 @@ static Variable FindVariable(DWARFContext &DICtx, StringRef name) {
   return {};
 }
 static void ProcessType(Type type, raw_ostream &os, unsigned childLv);
-static void ProcessMember(Type type, raw_ostream &os, unsigned childLv);
 static void ProcessStruct(Type type, raw_ostream &os, unsigned childLv) {
   DwarfTagStructureType st{type};
   os << formatv("struct {0} size {1}\n", st.TagName(), st.ByteSize());
   // iterate until DW_TAG_null
   for (auto child = type.getFirstChild();
        child && child.getTag() != DW_TAG_null; child = child.getSibling()) {
-    ProcessMember(child, os, childLv + 1);
+    ProcessType(child, os, childLv + 1);
   }
 }
 static void PrintDW_AT_type(DWARFDie Die, DWARFFormValue FormValue,

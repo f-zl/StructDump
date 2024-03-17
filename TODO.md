@@ -1,0 +1,2 @@
+- StructDump的函数递归调用有很多多余判断，改成像TableGen的更合理
+- 根据.data打印变量初值
