@@ -146,6 +146,7 @@ static bool dumpObjectFile(ObjectFile &Obj, DWARFContext &DICtx,
     OS << "variable not found\n";
     exit(EXIT_FAILURE);
   }
+  variable.dump(OS);
   auto type = FindVariableType(variable, VariableName, OS);
   if (!IsStructType(type)) {
     OS << "variable type is not a struct\n";

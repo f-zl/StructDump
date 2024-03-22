@@ -2,7 +2,7 @@
 
 ## Requirement
 
-Given an elf and a C struct global variable, print the  members' name, type, offset, size, and theoretically initial value\
+Given an elf and a C struct global variable, print the members' name, type, offset, size, and theoretically initial value\
 This code can be modified to do tasks like generating GUI table config, generating XCP A2L file
 
 ## Implementation
@@ -12,6 +12,16 @@ All the type information is in the elf's .debug_info section in DWARF format. Th
 The [LLVM document](https://llvm.org/docs/CMake.html#embedding-llvm-in-your-project) provides a example CMakeLists. But during linking the libraries `-lLLVMCore -lLLVMIRReader` cannot be found in Arch Linux and msys2. In the [PKGBUILD](<https://gitlab.archlinux.org/archlinux/packaging/packages/llvm>), the LLVM static libraries goes to llvm-libs package in a single libLLVM.so. The flags provided by `llvm-config --cxxflags`，`llvm-config --libs` work.
 
 The code of this repo is based on [llvm-dwarfdump](https://github.com/llvm/llvm-project/tree/main/llvm/tools/llvm-dwarfdump).
+
+## Build
+
+After install the LLVM libraries, run basic cmake build instructions:
+
+```sh
+cmake -B build -S .
+cd build
+cmake --build .
+```
 
 ## Usage
 
